@@ -144,8 +144,8 @@ impl cosmic::Application for IcedWorkspacesApplet {
             }
             Message::WheelScrolled(delta) => {
                 let discrete_delta = self.scroll.update(delta);
-                if discrete_delta.y != 0 {
-                    if let Some(w_i) = self
+                if discrete_delta.y != 0
+                    && let Some(w_i) = self
                         .workspaces
                         .iter()
                         .position(|w| w.state.contains(ext_workspace_handle_v1::State::Active))
@@ -160,7 +160,6 @@ impl cosmic::Application for IcedWorkspacesApplet {
                             ));
                         }
                     }
-                }
             }
             Message::WorkspaceOverview => {
                 let _ = ShellCommand::new("cosmic-workspaces").spawn();
