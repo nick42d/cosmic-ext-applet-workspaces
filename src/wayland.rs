@@ -16,15 +16,15 @@ use cctk::{
     },
     workspace::{Workspace, WorkspaceHandler, WorkspaceState},
 };
-use futures::{SinkExt, channel::mpsc, executor::block_on};
+use futures::{channel::mpsc, executor::block_on, SinkExt};
 use std::os::{
     fd::{FromRawFd, RawFd},
     unix::net::UnixStream,
 };
 use wayland_client::{
-    Connection, QueueHandle,
     globals::registry_queue_init,
     protocol::wl_output::{self, WlOutput},
+    Connection, QueueHandle,
 };
 
 #[derive(Debug, Clone)]
@@ -52,9 +52,7 @@ pub fn spawn_workspaces(tx: mpsc::Sender<Vec<Workspace>>) -> SyncSender<Workspac
 
     if let Ok(conn) = conn {
         std::thread::spawn(move || {
-            let configured_output = std::env::var("COSMIC_PANEL_OUTPUT")
-                .ok()
-                .unwrap_or_default();
+            let configured_output = std::env::var("COSMIC_PANEL_OUTPUT").ok();
             let mut event_loop = calloop::EventLoop::<State>::try_new().unwrap();
             let loop_handle = event_loop.handle();
             let (globals, event_queue) = registry_queue_init(&conn).unwrap();
@@ -116,7 +114,7 @@ pub fn spawn_workspaces(tx: mpsc::Sender<Vec<Workspace>>) -> SyncSender<Workspac
 pub struct State {
     running: bool,
     tx: mpsc::Sender<Vec<Workspace>>,
-    configured_output: String,
+    configured_output: Option<String>,
     expected_output: Option<WlOutput>,
     output_state: OutputState,
     registry_state: RegistryState,
@@ -162,7 +160,12 @@ impl OutputHandler for State {
         output: wl_output::WlOutput,
     ) {
         let info = self.output_state.info(&output).unwrap();
-        if info.name.as_deref() == Some(&self.configured_output) {
+        let is_target = match &self.configured_output {
+            Some(target) => info.name.as_deref() == Some(target),
+            None => self.expected_output.is_none(),
+        };
+
+        if is_target {
             self.expected_output = Some(output);
             if self.have_workspaces {
                 let _ = block_on(self.tx.send(self.workspace_list()));
