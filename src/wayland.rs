@@ -14,6 +14,7 @@ use cctk::{
         },
         registry::{ProvidesRegistryState, RegistryState},
     },
+    toplevel_info::{ToplevelInfo, ToplevelInfoHandler, ToplevelInfoState},
     workspace::{Workspace, WorkspaceHandler, WorkspaceState},
 };
 use futures::{channel::mpsc, executor::block_on, SinkExt};
@@ -32,7 +33,9 @@ pub enum WorkspaceEvent {
     Activate(ExtWorkspaceHandleV1),
 }
 
-pub fn spawn_workspaces(tx: mpsc::Sender<Vec<Workspace>>) -> SyncSender<WorkspaceEvent> {
+pub fn spawn_workspaces(
+    tx: mpsc::Sender<(Vec<Workspace>, Vec<ToplevelInfo>)>,
+) -> SyncSender<WorkspaceEvent> {
     let (workspaces_tx, workspaces_rx) = calloop::channel::sync_channel(100);
 
     let socket = std::env::var("X_PRIVILEGED_WAYLAND_SOCKET")
@@ -68,6 +71,7 @@ pub fn spawn_workspaces(tx: mpsc::Sender<Vec<Workspace>>) -> SyncSender<Workspac
                 output_state: OutputState::new(&globals, &qhandle),
                 configured_output,
                 workspace_state: WorkspaceState::new(&registry_state, &qhandle),
+                toplevel_info_state: ToplevelInfoState::new(&registry_state, &qhandle),
                 registry_state,
                 expected_output: None,
                 tx,
@@ -113,12 +117,13 @@ pub fn spawn_workspaces(tx: mpsc::Sender<Vec<Workspace>>) -> SyncSender<Workspac
 #[derive(Debug)]
 pub struct State {
     running: bool,
-    tx: mpsc::Sender<Vec<Workspace>>,
+    tx: mpsc::Sender<(Vec<Workspace>, Vec<cctk::toplevel_info::ToplevelInfo>)>,
     configured_output: Option<String>,
     expected_output: Option<WlOutput>,
     output_state: OutputState,
     registry_state: RegistryState,
     workspace_state: WorkspaceState,
+    toplevel_info_state: ToplevelInfoState,
     have_workspaces: bool,
 }
 
@@ -168,7 +173,10 @@ impl OutputHandler for State {
         if is_target {
             self.expected_output = Some(output);
             if self.have_workspaces {
-                let _ = block_on(self.tx.send(self.workspace_list()));
+                let _ = block_on(self.tx.send((
+                    self.workspace_list(),
+                    self.toplevel_info_state.toplevels().cloned().collect(),
+                )));
             }
         }
     }
@@ -197,10 +205,59 @@ impl WorkspaceHandler for State {
 
     fn done(&mut self) {
         self.have_workspaces = true;
-        let _ = block_on(self.tx.send(self.workspace_list()));
+        let _ = block_on(self.tx.send((
+            self.workspace_list(),
+            self.toplevel_info_state.toplevels().cloned().collect(),
+        )));
     }
 }
 
+impl ToplevelInfoHandler for State {
+    fn toplevel_info_state(&mut self) -> &mut cctk::toplevel_info::ToplevelInfoState {
+        &mut self.toplevel_info_state
+    }
+
+    fn new_toplevel(
+        &mut self,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+        toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
+    ) {
+        println!(
+            "New toplevel: {:?}",
+            self.toplevel_info_state.info(toplevel).unwrap()
+        );
+    }
+
+    fn update_toplevel(
+        &mut self,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+        toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
+    ) {
+        println!(
+            "Update toplevel: {:?}",
+            self.toplevel_info_state.info(toplevel).unwrap()
+        );
+    }
+
+    fn toplevel_closed(
+        &mut self,
+        conn: &Connection,
+        qh: &QueueHandle<Self>,
+        toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
+    ) {
+        println!(
+            "Closed toplevel: {:?}",
+            self.toplevel_info_state.info(toplevel).unwrap()
+        );
+    }
+    fn info_done(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>) {
+        println!("Info done")
+    }
+}
+
+cctk::delegate_toplevel_info!(State);
 cctk::delegate_workspace!(State);
 sctk::delegate_output!(State);
 sctk::delegate_registry!(State);
