@@ -7,8 +7,7 @@ use cctk::{
         protocols::ext::workspace::v1::client::ext_workspace_handle_v1::{
             self, ExtWorkspaceHandleV1,
         },
-    },
-    workspace::Workspace,
+    }, toplevel_info::ToplevelInfo, workspace::Workspace
 };
 use cosmic::{
     Element, Task, Theme, app,
@@ -51,6 +50,7 @@ pub enum Layout {
 struct IcedWorkspacesApplet {
     core: cosmic::app::Core,
     workspaces: Vec<Workspace>,
+    toplevels: Vec<ToplevelInfo>,
     workspace_tx: Option<SyncSender<WorkspaceEvent>>,
     layout: Layout,
     scroll: DiscreteScrollState,
@@ -107,6 +107,7 @@ impl cosmic::Application for IcedWorkspacesApplet {
                 },
                 core,
                 workspaces: Vec::new(),
+                toplevels: Vec::new(),
                 workspace_tx: Option::default(),
                 scroll: DiscreteScrollState::default().rate_limit(Some(SCROLL_RATE_LIMIT)),
             },
@@ -125,10 +126,11 @@ impl cosmic::Application for IcedWorkspacesApplet {
     fn update(&mut self, message: Self::Message) -> app::Task<Self::Message> {
         match message {
             Message::WorkspaceUpdate(msg) => match msg {
-                WorkspacesUpdate::Workspaces(mut list) => {
-                    list.retain(|w| !w.state.contains(ext_workspace_handle_v1::State::Hidden));
-                    list.sort_by(|w1, w2| w1.coordinates.cmp(&w2.coordinates));
-                    self.workspaces = list;
+                WorkspacesUpdate::Workspaces((mut workspace_list, mut toplevel_list)) => {
+                    workspace_list.retain(|w| !w.state.contains(ext_workspace_handle_v1::State::Hidden));
+                    workspace_list.sort_by(|w1, w2| w1.coordinates.cmp(&w2.coordinates));
+                    self.workspaces = workspace_list;
+                    self.toplevels = toplevel_list;
                 }
                 WorkspacesUpdate::Started(tx) => {
                     self.workspace_tx.replace(tx);
@@ -187,7 +189,8 @@ impl cosmic::Application for IcedWorkspacesApplet {
         let popup_index = self.popup_index().unwrap_or(self.workspaces.len());
 
         let buttons = self.workspaces[..popup_index].iter().map(|w| {
-            let content = self.core.applet.text(&w.name).font(cosmic::font::bold());
+            let app_id = self.toplevels.get(0).map(|tl| tl.app_id.clone()).unwrap_or_default();
+            let content = self.core.applet.text(format!("{}, {}", &app_id, &w.name)).font(cosmic::font::bold());
 
             let (width, height) = if self.core.applet.is_horizontal() {
                 (suggested_total as f32, suggested_window_size.1.get() as f32)

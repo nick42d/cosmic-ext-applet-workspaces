@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::wayland::{self, WorkspaceEvent};
-use cctk::{sctk::reexports::calloop::channel::SyncSender, workspace::Workspace};
+use cctk::{sctk::reexports::calloop::channel::SyncSender, toplevel_info::ToplevelInfo, workspace::Workspace};
 use cosmic::iced::{
     self, Subscription,
     futures::{SinkExt, StreamExt, channel::mpsc},
@@ -11,12 +11,12 @@ use cosmic::iced::{
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
-pub static WAYLAND_RX: LazyLock<Mutex<Option<mpsc::Receiver<Vec<Workspace>>>>> =
+pub static WAYLAND_RX: LazyLock<Mutex<Option<mpsc::Receiver<(Vec<Workspace>, Vec<ToplevelInfo>)>>>> =
     LazyLock::new(|| Mutex::new(None));
 
 #[derive(Debug, Clone)]
 pub enum WorkspacesUpdate {
-    Workspaces(Vec<Workspace>),
+    Workspaces((Vec<Workspace>, Vec<ToplevelInfo>)),
     Started(SyncSender<WorkspaceEvent>),
     Errored,
 }
@@ -71,7 +71,7 @@ pub enum State {
 }
 
 pub struct WorkspacesWatcher {
-    rx: mpsc::Receiver<Vec<Workspace>>,
+    rx: mpsc::Receiver<(Vec<Workspace>, Vec<ToplevelInfo>)>,
     tx: SyncSender<WorkspaceEvent>,
 }
 
