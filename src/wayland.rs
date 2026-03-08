@@ -17,15 +17,15 @@ use cctk::{
     toplevel_info::{ToplevelInfo, ToplevelInfoHandler, ToplevelInfoState},
     workspace::{Workspace, WorkspaceHandler, WorkspaceState},
 };
-use futures::{channel::mpsc, executor::block_on, SinkExt};
+use futures::{SinkExt, channel::mpsc, executor::block_on};
 use std::os::{
     fd::{FromRawFd, RawFd},
     unix::net::UnixStream,
 };
 use wayland_client::{
+    Connection, QueueHandle,
     globals::registry_queue_init,
     protocol::wl_output::{self, WlOutput},
-    Connection, QueueHandle,
 };
 
 #[derive(Debug, Clone)]
@@ -223,10 +223,10 @@ impl ToplevelInfoHandler for State {
         qh: &QueueHandle<Self>,
         toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
     ) {
-        println!(
-            "New toplevel: {:?}",
-            self.toplevel_info_state.info(toplevel).unwrap()
-        );
+        let _ = block_on(self.tx.send((
+            self.workspace_list(),
+            self.toplevel_info_state.toplevels().cloned().collect(),
+        )));
     }
 
     fn update_toplevel(
@@ -235,10 +235,10 @@ impl ToplevelInfoHandler for State {
         qh: &QueueHandle<Self>,
         toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
     ) {
-        println!(
-            "Update toplevel: {:?}",
-            self.toplevel_info_state.info(toplevel).unwrap()
-        );
+        let _ = block_on(self.tx.send((
+            self.workspace_list(),
+            self.toplevel_info_state.toplevels().cloned().collect(),
+        )));
     }
 
     fn toplevel_closed(
@@ -247,13 +247,16 @@ impl ToplevelInfoHandler for State {
         qh: &QueueHandle<Self>,
         toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
     ) {
-        println!(
-            "Closed toplevel: {:?}",
-            self.toplevel_info_state.info(toplevel).unwrap()
-        );
+        let _ = block_on(self.tx.send((
+            self.workspace_list(),
+            self.toplevel_info_state.toplevels().cloned().collect(),
+        )));
     }
     fn info_done(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>) {
-        println!("Info done")
+        let _ = block_on(self.tx.send((
+            self.workspace_list(),
+            self.toplevel_info_state.toplevels().cloned().collect(),
+        )));
     }
 }
 

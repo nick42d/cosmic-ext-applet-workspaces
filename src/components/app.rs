@@ -1,13 +1,17 @@
-// Copyright 2023 System76 <info@system76.com>
-// SPDX-License-Identifier: GPL-3.0-only
-
+use crate::{
+    config,
+    wayland::WorkspaceEvent,
+    wayland_subscription::{WorkspacesUpdate, workspaces},
+};
 use cctk::{
     sctk::reexports::{
         calloop::channel::SyncSender,
         protocols::ext::workspace::v1::client::ext_workspace_handle_v1::{
             self, ExtWorkspaceHandleV1,
         },
-    }, toplevel_info::ToplevelInfo, workspace::Workspace
+    },
+    toplevel_info::ToplevelInfo,
+    workspace::Workspace,
 };
 use cosmic::{
     Element, Task, Theme, app,
@@ -24,14 +28,8 @@ use cosmic::{
     surface,
     widget::{Id, autosize, container, horizontal_space, vertical_space},
 };
-
-use crate::{
-    config,
-    wayland::WorkspaceEvent,
-    wayland_subscription::{WorkspacesUpdate, workspaces},
-};
-
-use std::{process::Command as ShellCommand, sync::LazyLock, time::Duration};
+use itertools::Itertools;
+use std::{collections::HashMap, process::Command as ShellCommand, sync::LazyLock, time::Duration};
 
 static AUTOSIZE_MAIN_ID: LazyLock<Id> = LazyLock::new(|| Id::new("autosize-main"));
 
@@ -127,7 +125,8 @@ impl cosmic::Application for IcedWorkspacesApplet {
         match message {
             Message::WorkspaceUpdate(msg) => match msg {
                 WorkspacesUpdate::Workspaces((mut workspace_list, mut toplevel_list)) => {
-                    workspace_list.retain(|w| !w.state.contains(ext_workspace_handle_v1::State::Hidden));
+                    workspace_list
+                        .retain(|w| !w.state.contains(ext_workspace_handle_v1::State::Hidden));
                     workspace_list.sort_by(|w1, w2| w1.coordinates.cmp(&w2.coordinates));
                     self.workspaces = workspace_list;
                     self.toplevels = toplevel_list;
@@ -151,17 +150,17 @@ impl cosmic::Application for IcedWorkspacesApplet {
                         .workspaces
                         .iter()
                         .position(|w| w.state.contains(ext_workspace_handle_v1::State::Active))
-                    {
-                        let d_i = (w_i as isize - discrete_delta.y)
-                            .rem_euclid(self.workspaces.len() as isize)
-                            as usize;
+                {
+                    let d_i = (w_i as isize - discrete_delta.y)
+                        .rem_euclid(self.workspaces.len() as isize)
+                        as usize;
 
-                        if let Some(tx) = self.workspace_tx.as_mut() {
-                            let _ = tx.try_send(WorkspaceEvent::Activate(
-                                self.workspaces[d_i].handle.clone(),
-                            ));
-                        }
+                    if let Some(tx) = self.workspace_tx.as_mut() {
+                        let _ = tx.try_send(WorkspaceEvent::Activate(
+                            self.workspaces[d_i].handle.clone(),
+                        ));
                     }
+                }
             }
             Message::WorkspaceOverview => {
                 let _ = ShellCommand::new("cosmic-workspaces").spawn();
@@ -176,6 +175,9 @@ impl cosmic::Application for IcedWorkspacesApplet {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        let id_map: HashMap<&str, char> =
+            HashMap::from_iter([("kitty", ''), ("google-chrome", '')]);
+        const UNKNOWN_ID_CHAR: char = '';
         if self.workspaces.is_empty() {
             return row![].padding(8).into();
         }
@@ -189,8 +191,23 @@ impl cosmic::Application for IcedWorkspacesApplet {
         let popup_index = self.popup_index().unwrap_or(self.workspaces.len());
 
         let buttons = self.workspaces[..popup_index].iter().map(|w| {
-            let app_id = self.toplevels.get(0).map(|tl| tl.app_id.clone()).unwrap_or_default();
-            let content = self.core.applet.text(format!("{}, {}", &app_id, &w.name)).font(cosmic::font::bold());
+            let mut app_icons: String = Itertools::intersperse(
+                self.toplevels
+                    .iter()
+                    .filter(|tl| tl.workspace.contains(&w.handle))
+                    .map(|tl| id_map.get(tl.app_id.as_str()).unwrap_or(&UNKNOWN_ID_CHAR)),
+                &' ',
+            )
+            .collect();
+            if !app_icons.is_empty() {
+                app_icons.insert(0, ' ');
+                app_icons.push(' ');
+            }
+            let content = self
+                .core
+                .applet
+                .text(format!("{}{}", &w.name, app_icons))
+                .font(cosmic::font::bold());
 
             let (width, height) = if self.core.applet.is_horizontal() {
                 (suggested_total as f32, suggested_window_size.1.get() as f32)
