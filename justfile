@@ -22,8 +22,8 @@ metainfo := APPID + '.metainfo.xml'
 metainfo-src := 'res' / metainfo
 metainfo-dst := clean(rootdir / prefix) / 'share' / 'metainfo' / metainfo
 
-icons-src := 'res' / 'icons' / 'hicolor'
-icons-dst := clean(rootdir / prefix) / 'share' / 'icons' / 'hicolor'
+icons-src := 'res' / 'icons' / 'scalable'
+icons-dst := clean(rootdir / prefix) / 'share' / 'icons' / 'scalable'
 
 # Default recipe which runs `just build-release`
 default: build-release
