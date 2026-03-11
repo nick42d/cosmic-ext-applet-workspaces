@@ -1,4 +1,4 @@
-use crate::wayland::{self, WorkspaceEvent};
+use crate::wayland::{self, CosmicUpdate, WorkspaceEvent};
 use cctk::{
     sctk::reexports::calloop::channel::SyncSender, toplevel_info::ToplevelInfo,
     workspace::Workspace,
@@ -11,13 +11,13 @@ use cosmic::iced::{
 use std::sync::LazyLock;
 use tokio::sync::Mutex;
 
-pub static WAYLAND_RX: LazyLock<
-    Mutex<Option<mpsc::Receiver<(Vec<Workspace>, Vec<ToplevelInfo>)>>>,
-> = LazyLock::new(|| Mutex::new(None));
+pub static WAYLAND_RX: LazyLock<Mutex<Option<mpsc::Receiver<CosmicUpdate>>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 #[derive(Debug, Clone)]
 pub enum WorkspacesUpdate {
-    Workspaces((Vec<Workspace>, Vec<ToplevelInfo>)),
+    Workspaces(Vec<Workspace>),
+    TopLevels(Vec<ToplevelInfo>),
     Started(SyncSender<WorkspaceEvent>),
     Errored,
 }
@@ -55,7 +55,14 @@ async fn start_listening(
                 guard.as_mut().unwrap()
             };
             if let Some(w) = rx.next().await {
-                _ = output.send(WorkspacesUpdate::Workspaces(w)).await;
+                match w {
+                    CosmicUpdate::Workspaces(w) => {
+                        _ = output.send(WorkspacesUpdate::Workspaces(w)).await
+                    }
+                    CosmicUpdate::TopLevels(t) => {
+                        _ = output.send(WorkspacesUpdate::TopLevels(t)).await
+                    }
+                }
                 State::Waiting
             } else {
                 _ = output.send(WorkspacesUpdate::Errored).await;
@@ -72,7 +79,7 @@ pub enum State {
 }
 
 pub struct WorkspacesWatcher {
-    rx: mpsc::Receiver<(Vec<Workspace>, Vec<ToplevelInfo>)>,
+    rx: mpsc::Receiver<CosmicUpdate>,
     tx: SyncSender<WorkspaceEvent>,
 }
 
