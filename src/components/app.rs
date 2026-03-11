@@ -124,11 +124,13 @@ impl cosmic::Application for IcedWorkspacesApplet {
     fn update(&mut self, message: Self::Message) -> app::Task<Self::Message> {
         match message {
             Message::WorkspaceUpdate(msg) => match msg {
-                WorkspacesUpdate::Workspaces((mut workspace_list, mut toplevel_list)) => {
+                WorkspacesUpdate::Workspaces(mut workspace_list) => {
                     workspace_list
                         .retain(|w| !w.state.contains(ext_workspace_handle_v1::State::Hidden));
                     workspace_list.sort_by(|w1, w2| w1.coordinates.cmp(&w2.coordinates));
                     self.workspaces = workspace_list;
+                }
+                WorkspacesUpdate::TopLevels(toplevel_list) => {
                     self.toplevels = toplevel_list;
                 }
                 WorkspacesUpdate::Started(tx) => {

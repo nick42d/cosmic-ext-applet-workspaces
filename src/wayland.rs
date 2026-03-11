@@ -30,9 +30,13 @@ pub enum WorkspaceEvent {
     Activate(ExtWorkspaceHandleV1),
 }
 
-pub fn spawn_workspaces(
-    tx: mpsc::Sender<(Vec<Workspace>, Vec<ToplevelInfo>)>,
-) -> SyncSender<WorkspaceEvent> {
+#[derive(Debug, Clone)]
+pub enum CosmicUpdate {
+    Workspaces(Vec<Workspace>),
+    TopLevels(Vec<ToplevelInfo>),
+}
+
+pub fn spawn_workspaces(tx: mpsc::Sender<CosmicUpdate>) -> SyncSender<WorkspaceEvent> {
     let (workspaces_tx, workspaces_rx) = calloop::channel::sync_channel(100);
 
     let socket = std::env::var("X_PRIVILEGED_WAYLAND_SOCKET")
@@ -52,7 +56,9 @@ pub fn spawn_workspaces(
 
     if let Ok(conn) = conn {
         std::thread::spawn(move || {
-            let configured_output = std::env::var("COSMIC_PANEL_OUTPUT").ok();
+            let configured_output = std::env::var("COSMIC_PANEL_OUTPUT")
+                .ok()
+                .unwrap_or_default();
             let mut event_loop = calloop::EventLoop::<State>::try_new().unwrap();
             let loop_handle = event_loop.handle();
             let (globals, event_queue) = registry_queue_init(&conn).unwrap();
@@ -114,8 +120,8 @@ pub fn spawn_workspaces(
 #[derive(Debug)]
 pub struct State {
     running: bool,
-    tx: mpsc::Sender<(Vec<Workspace>, Vec<cctk::toplevel_info::ToplevelInfo>)>,
-    configured_output: Option<String>,
+    tx: mpsc::Sender<CosmicUpdate>,
+    configured_output: String,
     expected_output: Option<WlOutput>,
     output_state: OutputState,
     registry_state: RegistryState,
@@ -162,18 +168,13 @@ impl OutputHandler for State {
         output: wl_output::WlOutput,
     ) {
         let info = self.output_state.info(&output).unwrap();
-        let is_target = match &self.configured_output {
-            Some(target) => info.name.as_deref() == Some(target),
-            None => self.expected_output.is_none(),
-        };
-
-        if is_target {
+        if info.name.as_deref() == Some(&self.configured_output) {
             self.expected_output = Some(output);
             if self.have_workspaces {
-                let _ = block_on(self.tx.send((
-                    self.workspace_list(),
-                    self.toplevel_info_state.toplevels().cloned().collect(),
-                )));
+                let _ = block_on(
+                    self.tx
+                        .send(CosmicUpdate::Workspaces(self.workspace_list())),
+                );
             }
         }
     }
@@ -202,10 +203,10 @@ impl WorkspaceHandler for State {
 
     fn done(&mut self) {
         self.have_workspaces = true;
-        let _ = block_on(self.tx.send((
-            self.workspace_list(),
-            self.toplevel_info_state.toplevels().cloned().collect(),
-        )));
+        let _ = block_on(
+            self.tx
+                .send(CosmicUpdate::Workspaces(self.workspace_list())),
+        );
     }
 }
 
@@ -213,45 +214,38 @@ impl ToplevelInfoHandler for State {
     fn toplevel_info_state(&mut self) -> &mut cctk::toplevel_info::ToplevelInfoState {
         &mut self.toplevel_info_state
     }
-
     fn new_toplevel(
         &mut self,
-        conn: &Connection,
-        qh: &QueueHandle<Self>,
-        toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
     ) {
-        let _ = block_on(self.tx.send((
-            self.workspace_list(),
+        let _ = block_on(self.tx.send(CosmicUpdate::TopLevels(
             self.toplevel_info_state.toplevels().cloned().collect(),
         )));
     }
-
     fn update_toplevel(
         &mut self,
-        conn: &Connection,
-        qh: &QueueHandle<Self>,
-        toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
     ) {
-        let _ = block_on(self.tx.send((
-            self.workspace_list(),
+        let _ = block_on(self.tx.send(CosmicUpdate::TopLevels(
             self.toplevel_info_state.toplevels().cloned().collect(),
         )));
     }
-
     fn toplevel_closed(
         &mut self,
-        conn: &Connection,
-        qh: &QueueHandle<Self>,
-        toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+        _toplevel: &cctk::wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
     ) {
-        let _ = block_on(self.tx.send((
-            self.workspace_list(),
+        let _ = block_on(self.tx.send(CosmicUpdate::TopLevels(
             self.toplevel_info_state.toplevels().cloned().collect(),
         )));
     }
     fn info_done(&mut self, _conn: &Connection, _qh: &QueueHandle<Self>) {
-        let _ = block_on(self.tx.send((
-            self.workspace_list(),
+        let _ = block_on(self.tx.send(CosmicUpdate::TopLevels(
             self.toplevel_info_state.toplevels().cloned().collect(),
         )));
     }
