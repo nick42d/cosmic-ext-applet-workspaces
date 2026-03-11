@@ -31,6 +31,30 @@ use cosmic::{
 use itertools::Itertools;
 use std::{collections::HashMap, process::Command as ShellCommand, sync::LazyLock, time::Duration};
 
+mod config2 {
+    use serde::{Deserialize, Serialize};
+
+    const DEFAULT_CONFIG: &str = r#"unknown_app_icon = ""
+basic_icon_rules = [
+  { app_id = "google-chrome", icon = "" },
+  { app_id = "kitty", icon = "" },
+]"#;
+
+    #[derive(Deserialize, Serialize)]
+    pub struct Config {
+        pub unknown_app_icon: char,
+        pub basic_icon_rules: Vec<BasicIconRule>,
+    }
+    #[derive(Deserialize, Serialize)]
+    pub struct BasicIconRule {
+        pub app_id: String,
+        pub icon: char,
+    }
+    pub fn get_config() -> Config {
+        toml::from_str(DEFAULT_CONFIG).unwrap()
+    }
+}
+
 static AUTOSIZE_MAIN_ID: LazyLock<Id> = LazyLock::new(|| Id::new("autosize-main"));
 
 const SCROLL_RATE_LIMIT: Duration = Duration::from_millis(200);
@@ -52,6 +76,7 @@ struct IcedWorkspacesApplet {
     workspace_tx: Option<SyncSender<WorkspaceEvent>>,
     layout: Layout,
     scroll: DiscreteScrollState,
+    config: config2::Config,
 }
 
 impl IcedWorkspacesApplet {
@@ -108,6 +133,7 @@ impl cosmic::Application for IcedWorkspacesApplet {
                 toplevels: Vec::new(),
                 workspace_tx: Option::default(),
                 scroll: DiscreteScrollState::default().rate_limit(Some(SCROLL_RATE_LIMIT)),
+                config: config2::get_config(),
             },
             Task::none(),
         )
@@ -177,9 +203,6 @@ impl cosmic::Application for IcedWorkspacesApplet {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let id_map: HashMap<&str, char> =
-            HashMap::from_iter([("kitty", ''), ("google-chrome", '')]);
-        const UNKNOWN_ID_CHAR: char = '';
         if self.workspaces.is_empty() {
             return row![].padding(8).into();
         }
@@ -197,8 +220,15 @@ impl cosmic::Application for IcedWorkspacesApplet {
                 self.toplevels
                     .iter()
                     .filter(|tl| tl.workspace.contains(&w.handle))
-                    .map(|tl| id_map.get(tl.app_id.as_str()).unwrap_or(&UNKNOWN_ID_CHAR)),
-                &' ',
+                    .map(|tl| {
+                        self.config
+                            .basic_icon_rules
+                            .iter()
+                            .find(|rule| rule.app_id == tl.app_id)
+                            .map(|rule| rule.icon)
+                            .unwrap_or(self.config.unknown_app_icon)
+                    }),
+                ' ',
             )
             .collect();
             if !app_icons.is_empty() {
