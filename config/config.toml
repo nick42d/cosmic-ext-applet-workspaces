@@ -1,0 +1,5 @@
+unknown_app_icon = ""
+basic_icon_rules = [
+  { app_id = "google-chrome", icon = "" },
+  { app_id = "kitty", icon = "" },
+]
