@@ -17,10 +17,13 @@ use cctk::{
 use cosmic::{
     Element, Task, Theme, app,
     applet::cosmic_panel_config::PanelAnchor,
-    desktop::fde::{self, DesktopEntry, unicase::Ascii},
+    desktop::{
+        IconSourceExt,
+        fde::{self, DesktopEntry, unicase::Ascii},
+    },
     iced::core::{Background, Border},
     iced::{
-        Alignment, Background, Border,
+        Alignment,
         Event::Mouse,
         Length, Limits, Subscription, event,
         mouse::{self, ScrollDelta},
@@ -28,7 +31,7 @@ use cosmic::{
     },
     scroll::DiscreteScrollState,
     surface,
-    widget::{Id, autosize, container, space},
+    widget::{Id, Row, autosize, container, space},
 };
 use itertools::Itertools;
 use std::{collections::HashMap, process::Command as ShellCommand, sync::LazyLock, time::Duration};
@@ -247,6 +250,7 @@ impl cosmic::Application for IcedWorkspacesApplet {
             }
             Message::WorkspaceOverview => {
                 let _ = ShellCommand::new("cosmic-workspaces").spawn();
+            }
             Message::Surface(a) => {
                 return cosmic::task::message(cosmic::Action::Surface(a));
             }
@@ -290,12 +294,27 @@ impl cosmic::Application for IcedWorkspacesApplet {
             let content = self
                 .core
                 .applet
-                .text(format!("{}{}", w.name, app_icons))
+                .text(format!("{}", w.name))
                 .font(cosmic::font::bold());
-            let content = row!(
-                content,
-                cosmic::widget::icon::from_name("dialog-error-symbolic")
-            );
+            let mut app_icons_2: Vec<Element<'_, Message>> = self
+                .toplevels
+                .iter()
+                .filter(|tl| tl.workspace.contains(&w.handle))
+                .flat_map(|tl| {
+                    fde::find_app_by_id(&self.desktop_entries, fde::unicase::Ascii::new(&tl.app_id))
+                        .cloned()
+                })
+                .map(|entry| {
+                    let ic: Element<'_, Message> = cosmic::widget::icon(
+                        fde::IconSource::from_unknown(entry.icon().unwrap_or_default())
+                            .as_cosmic_icon(),
+                    )
+                    .into();
+                    ic
+                })
+                .collect();
+            let app_icons_2 = cosmic::widget::row(app_icons_2);
+            let content = row![content, app_icons_2];
 
             let (width, height) = if self.core.applet.is_horizontal() {
                 (suggested_total as f32, suggested_window_size.1.get() as f32)
