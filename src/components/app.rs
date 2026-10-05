@@ -11,14 +11,16 @@ use cctk::{
         },
     },
     toplevel_info::ToplevelInfo,
+    wayland_protocols::ext::workspace::v1::server::ext_workspace_handle_v1::WorkspaceCapabilities,
     workspace::Workspace,
 };
 use cosmic::{
     Element, Task, Theme, app,
     applet::cosmic_panel_config::PanelAnchor,
+    desktop::fde::{self, DesktopEntry, unicase::Ascii},
     iced::core::{Background, Border},
     iced::{
-        Alignment,
+        Alignment, Background, Border,
         Event::Mouse,
         Length, Limits, Subscription, event,
         mouse::{self, ScrollDelta},
@@ -77,6 +79,8 @@ struct IcedWorkspacesApplet {
     layout: Layout,
     scroll: DiscreteScrollState,
     config: config2::Config,
+    desktop_entries: Vec<cosmic::desktop::fde::DesktopEntry>,
+    locales: Vec<String>,
 }
 
 impl IcedWorkspacesApplet {
@@ -104,6 +108,56 @@ impl IcedWorkspacesApplet {
         }
         index
     }
+    // Cache all desktop entries to use when new apps are added to the dock.
+    // From Cosmic App List
+    fn update_desktop_entries(&mut self) {
+        self.desktop_entries = fde::Iter::new(fde::default_paths())
+            .filter_map(|p| fde::DesktopEntry::from_path(p, Some(&self.locales)).ok())
+            .collect::<Vec<_>>();
+    }
+    fn find_desktop_entry_for_toplevel(
+        &mut self,
+        info: &ToplevelInfo,
+        unicase_appid: Ascii<&str>,
+    ) -> DesktopEntry {
+        if let Some(appid) = fde::find_app_by_id(&self.desktop_entries, unicase_appid) {
+            appid.clone()
+        } else {
+            // Update desktop entries in case it was not found.
+            self.update_desktop_entries();
+            if let Some(appid) = fde::find_app_by_id(&self.desktop_entries, unicase_appid) {
+                appid.clone()
+            } else {
+                tracing::error!(id = info.app_id, "could not find desktop entry for app");
+                let mut fallback_entry = fde::DesktopEntry::from_appid(info.app_id.clone());
+                // proton opens games as steam_app_X, where X is either
+                // the steam appid or "default". games with a steam appid
+                // can have a desktop entry generated elsewhere; this
+                // specifically handles non-steam games opened
+                // under proton
+                // in addition, try to match WINE entries who have its
+                // appid = the full name of the executable (incl. .exe)
+                let is_proton_game = info.app_id == "steam_app_default";
+                if is_proton_game || info.app_id.ends_with(".exe") {
+                    for entry in &self.desktop_entries {
+                        let localised_name = entry.name(&self.locales).unwrap_or_default();
+                        if localised_name == info.title {
+                            // if this is a proton game, we only want
+                            // to look for game entries
+                            if is_proton_game
+                                && !entry.categories().unwrap_or_default().contains(&"Game")
+                            {
+                                continue;
+                            }
+                            fallback_entry = entry.clone();
+                            break;
+                        }
+                    }
+                }
+                fallback_entry
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -122,21 +176,22 @@ impl cosmic::Application for IcedWorkspacesApplet {
     const APP_ID: &'static str = config::APP_ID;
 
     fn init(core: cosmic::app::Core, _flags: Self::Flags) -> (Self, app::Task<Self::Message>) {
-        (
-            Self {
-                layout: match &core.applet.anchor {
-                    PanelAnchor::Left | PanelAnchor::Right => Layout::Column,
-                    PanelAnchor::Top | PanelAnchor::Bottom => Layout::Row,
-                },
-                core,
-                workspaces: Vec::new(),
-                toplevels: Vec::new(),
-                workspace_tx: Option::default(),
-                scroll: DiscreteScrollState::default().rate_limit(Some(SCROLL_RATE_LIMIT)),
-                config: config2::get_config(),
+        let mut this = Self {
+            layout: match &core.applet.anchor {
+                PanelAnchor::Left | PanelAnchor::Right => Layout::Column,
+                PanelAnchor::Top | PanelAnchor::Bottom => Layout::Row,
             },
-            Task::none(),
-        )
+            core,
+            workspaces: Vec::new(),
+            toplevels: Vec::new(),
+            workspace_tx: Option::default(),
+            scroll: DiscreteScrollState::default().rate_limit(Some(SCROLL_RATE_LIMIT)),
+            config: config2::get_config(),
+            desktop_entries: Vec::new(),
+            locales: vec![],
+        };
+        this.update_desktop_entries();
+        (this, Task::none())
     }
 
     fn core(&self) -> &cosmic::app::Core {
@@ -192,7 +247,6 @@ impl cosmic::Application for IcedWorkspacesApplet {
             }
             Message::WorkspaceOverview => {
                 let _ = ShellCommand::new("cosmic-workspaces").spawn();
-            }
             Message::Surface(a) => {
                 return cosmic::task::message(cosmic::Action::Surface(a));
             }
@@ -236,8 +290,12 @@ impl cosmic::Application for IcedWorkspacesApplet {
             let content = self
                 .core
                 .applet
-                .text(format!("{}{}", &w.name, app_icons))
+                .text(format!("{}{}", w.name, app_icons))
                 .font(cosmic::font::bold());
+            let content = row!(
+                content,
+                cosmic::widget::icon::from_name("dialog-error-symbolic")
+            );
 
             let (width, height) = if self.core.applet.is_horizontal() {
                 (suggested_total as f32, suggested_window_size.1.get() as f32)
